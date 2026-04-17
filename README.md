@@ -2,74 +2,41 @@
 
 Remotely control multiple Claude Code sessions on a Mac via personal WeChat.
 
-## Architecture
-
-```text
-WeChat (mobile)
-  ↕  iLink Bot API
-bin/claude-bridge
-  ├── platform adapter (currently iLink)
-  ├── session manager
-  │     └── Terminal.app -> claude
-  │           ↕ named pipe
-  └── hooks/push_output.py
-```
-
-The default platform is WeChat/iLink, designed for a single WeChat account with a single user. The main process starts in the background by default and writes logs to `~/.claude-bridge/bridge.log`.
-
-## Quick Start
+## Installation
 
 ```bash
-make all
-
-./bin/claude-bridge install-hooks
-./bin/claude-bridge login
-./bin/claude-bridge
-```
-
-After installing the hook, merge the contents of [hooks/settings.json](hooks/settings.json) into `~/.claude/settings.json`.
-
-## Homebrew
-
-A Homebrew formula template is included: [Formula/claude-bridge.rb](Formula/claude-bridge.rb).
-Full release steps: [RELEASING.md](RELEASING.md).
-
-Recommended steps:
-
-1. Publish a GitHub Release
-2. Compute the `sha256` of the release tarball
-3. Update `url` and `sha256` in the formula
-4. Host it in your tap repo, e.g. `homebrew-claude-bridge`
-
-Users can then install with:
-
-```bash
+brew tap coderabbit214/claude-bridge https://github.com/coderabbit214/claude-bridge
 brew install claude-bridge
+```
+
+## Setup
+
+```bash
 claude-bridge install-hooks
 claude-bridge login
 claude-bridge
 ```
 
-To use with `brew services`:
+After installing hooks, merge the contents of `~/.claude-bridge/hooks/settings.json` into `~/.claude/settings.json`.
+
+To start automatically with your Mac:
 
 ```bash
 brew services start claude-bridge
 ```
 
-The formula uses the foreground command `claude-bridge serve` for this mode.
-
-## Local Commands
+## Commands
 
 ```bash
-./bin/claude-bridge           # Start bridge in background (default)
-./bin/claude-bridge start     # Same as above
-./bin/claude-bridge status    # Show bridge status
-./bin/claude-bridge stop      # Stop bridge
-./bin/claude-bridge list      # List discoverable sessions
-./bin/claude-bridge logs      # View logs
-./bin/claude-bridge logs -f   # Follow logs
-./bin/claude-bridge login     # Scan QR to log in
-./bin/claude-bridge install-hooks  # Install Claude hooks
+claude-bridge             # Start bridge in background (default)
+claude-bridge start       # Same as above
+claude-bridge status      # Show bridge status
+claude-bridge stop        # Stop bridge
+claude-bridge list        # List discoverable sessions
+claude-bridge logs        # View logs
+claude-bridge logs -f     # Follow logs
+claude-bridge login       # Scan QR to log in
+claude-bridge install-hooks  # Install Claude hooks
 ```
 
 ## WeChat Commands
@@ -97,18 +64,6 @@ Notes:
 - Output is sent in event-based incremental chunks, not token-level streaming.
 - Sessions created via `#n` on mobile open a visible Terminal window on Mac.
 
-## State Files
-
-```text
-~/.claude-bridge/
-  credentials.json   # login credentials
-  context-tokens.json
-  cursor.txt
-  ambient-user.txt   # current sole message target
-  bridge.log
-  bridge.pid
-```
-
 ## Proxy
 
 `claude-bridge` and the Claude sessions it spawns inherit the following environment variables from the shell:
@@ -118,60 +73,15 @@ Notes:
 - `ALL_PROXY`
 - `NO_PROXY`
 
-Example:
-
-```bash
-./bin/claude-bridge
-```
-
-To proxy the login step as well:
-
-```bash
-./bin/claude-bridge login
-```
-
-## Verification
-
-```bash
-./bin/claude-bridge
-./bin/claude-bridge logs -f
-```
-
-Then send from WeChat:
-
-```text
-#n .
-```
-
-Then send:
-
-```text
-summarize this project for me
-```
-
-Because `#n` sets the new session as the default, the plain text message goes directly into it. In the logs you should see:
-
-```text
-INFO rx ...
-INFO session output ...
-INFO sending to user ...
-```
-
-## Dependencies
-
-- Go 1.22+
-- Python 3.8+
-- Claude Code CLI (`claude` command available)
-
 ## TODO
 - [X] Sessions started before the bridge cannot be discovered
 - [ ] Cannot send messages to user after startup
-  - [X] Works after receiving one message
-  - [ ] Cannot be used on first run; awaiting official support
+    - [X] Works after receiving one message
+    - [ ] Cannot be used on first run; awaiting official support
 - [X] Change command prefix
 - [X] Simplify commands
 - [X] Simplify session selection; names were too long
 - [X] Improve output
-  - [X] Distinguish user and assistant output
+    - [X] Distinguish user and assistant output
 - [ ] Support more platforms
-  - [X] WeChat
+    - [X] WeChat
