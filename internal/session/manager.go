@@ -488,7 +488,6 @@ trap cleanup EXIT INT TERM
 cd %s
 export CLAUDE_SESSION_ID=%s
 export CLAUDE_HOOK_PIPE=%s
-export https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890 all_proxy=socks5://127.0.0.1:7890
 cat > %s <<EOF
 {"id":"%s","pid":$$,"work_dir":%s,"input_pipe":%s,"output_pipe":%s}
 EOF
