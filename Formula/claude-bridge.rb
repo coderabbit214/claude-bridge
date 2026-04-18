@@ -1,8 +1,8 @@
 class ClaudeBridge < Formula
   desc "Control Claude Code sessions remotely from WeChat via iLink"
   homepage "https://github.com/coderabbit214/claude-bridge"
-  url "https://github.com/coderabbit214/claude-bridge/archive/refs/tags/v0.0.1.tar.gz"
-  sha256 "f1fb99af3ce81298e738b447242a27986943ef8eaab036a104c450f7631f8e94"
+  url "https://github.com/coderabbit214/claude-bridge/archive/refs/tags/v0.0.2.tar.gz"
+  sha256 "3d94ce543c18f640ab23a6049568f70ac16a1d2a7ab889330eb35b044bc2c7b4"
   license "MIT"
   depends_on :macos
   depends_on "go" => :build
