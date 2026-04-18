@@ -154,8 +154,16 @@ func runBridge(args []string) error {
 			return
 		}
 		slog.Info("session output", "sid", sid, "user", targetID, "chars", len([]rune(text)))
-		prefix := fmt.Sprintf("[%s]\n", sid)
-		sendToTarget(targetID, prefix+text)
+		sender := "System"
+		body := text
+		if after, ok := strings.CutPrefix(text, "SENDER:"); ok {
+			if idx := strings.Index(after, "\n"); idx >= 0 {
+				sender = after[:idx]
+				body = strings.TrimSpace(after[idx+1:])
+			}
+		}
+		prefix := fmt.Sprintf("[%s] %s\n", sid, sender)
+		sendToTarget(targetID, prefix+body)
 	})
 
 	ambientUserPath := platform.AmbientUserPath(stateDir)
@@ -187,7 +195,7 @@ func runBridge(args []string) error {
 		reply, err := mgr.Dispatch(text)
 		if err != nil {
 			slog.Warn("dispatch failed", "user", targetID, "text", truncateStr(text, 80), "err", err)
-			sendToTarget(targetID, "❌ error: "+err.Error())
+			sendToTarget(targetID, "error: "+err.Error())
 		} else if reply != "" {
 			sendToTarget(targetID, reply)
 		}

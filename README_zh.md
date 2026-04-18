@@ -25,6 +25,14 @@ claude-bridge
 brew services start claude-bridge
 ```
 
+## 更新
+
+```bash
+brew update
+brew upgrade claude-bridge
+brew services restart claude-bridge
+```
+
 ## 本地命令
 
 ```bash

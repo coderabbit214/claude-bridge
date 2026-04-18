@@ -344,7 +344,7 @@ func (m *Manager) ListSessions() string {
 		return "No active sessions. Send #n ~/proj to create one"
 	}
 	var sb strings.Builder
-	sb.WriteString("📋 Active sessions:\n")
+	sb.WriteString("Active sessions:\n")
 	for id, s := range m.sessions {
 		status := "running"
 		if !s.IsAlive() {

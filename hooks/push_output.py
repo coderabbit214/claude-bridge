@@ -246,7 +246,7 @@ def run_input_daemon(input_pipe: str, manifest_path: str, output_pipe: str) -> N
                 pass
 
 
-def write_to_pipe(text: str) -> None:
+def write_to_pipe(text: str, sender: str = "System") -> None:
     if not PIPE or not os.path.exists(PIPE):
         return
     # Use O_NONBLOCK so we never hang when the bridge isn't reading yet.
@@ -262,6 +262,7 @@ def write_to_pipe(text: str) -> None:
         return  # bridge not running — skip silently
     try:
         with os.fdopen(fd, "w") as f:
+            f.write(f"SENDER:{sender}\n")
             f.write(text)
             if not text.endswith("\n"):
                 f.write("\n")
@@ -528,7 +529,7 @@ def _wait_for_valid_reply(reply_pipe: Path | None, validate: callable, invalid_h
             return "replaced", None
         if validate(choice):
             return "ok", choice
-        write_to_pipe(f"⚙ invalid input\n{invalid_hint}")
+        write_to_pipe(f"invalid input\n{invalid_hint}", "System")
 
 
 def handle_permission_request(event: dict[str, Any]) -> None:
@@ -536,14 +537,14 @@ def handle_permission_request(event: dict[str, Any]) -> None:
     tool_name = str(event.get("tool_name") or event.get("toolName") or "tool").strip()
     tool_input = event.get("tool_input") or event.get("toolInput") or {}
 
-    parts = [f"⚙ permission request", f"tool: {tool_name}"]
+    parts = [f"permission request", f"tool: {tool_name}"]
     for key in ("command", "file_path", "path", "url", "pattern"):
         val = tool_input.get(key)
         if val and isinstance(val, str):
             parts.append(f"{key}: {val[:200]}")
             break
     parts += ["", "1. allow", "2. deny", "", "reply with a number"]
-    write_to_pipe("\n".join(parts))
+    write_to_pipe("\n".join(parts), "Assistant/permission")
 
     reply_pipe = _make_reply_pipe()
     if reply_pipe is not None:
@@ -562,12 +563,12 @@ def handle_permission_request(event: dict[str, Any]) -> None:
     if status == "replaced":
         return
     if status != "ok":
-        write_to_pipe(f"⚙ permission request ended: {tool_name}")
+        write_to_pipe(f"permission request ended: {tool_name}", "System")
         return
 
     behavior = "allow" if choice == "1" else "deny"
     label = "allowed" if behavior == "allow" else "denied"
-    write_to_pipe(f"⚙ {label}: {tool_name}")
+    write_to_pipe(f"{label}: {tool_name}", "System")
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PermissionRequest",
@@ -579,7 +580,7 @@ def handle_permission_request(event: dict[str, Any]) -> None:
 def extract_permission_denied_text(event: dict[str, Any]) -> str:
     tool_name = str(event.get("tool_name") or event.get("toolName") or "tool").strip()
     reason = str(event.get("reason") or event.get("message") or "").strip()
-    parts = [f"⚙ permission denied: {tool_name}"]
+    parts = [f"permission denied: {tool_name}"]
     if reason:
         parts.append(reason)
     return "\n".join(parts)
@@ -589,7 +590,7 @@ def extract_notification_text(event: dict[str, Any]) -> str:
     subtype = str(event.get("subtype") or event.get("notification_type") or "notification").strip()
     title = str(event.get("title") or "").strip()
     message = str(event.get("message") or event.get("text") or "").strip()
-    parts = [f"⚙ notification: {subtype}"]
+    parts = [f"notification: {subtype}"]
     if title:
         parts.append(title)
     if message:
@@ -629,7 +630,7 @@ def handle_elicitation(event: dict[str, Any]) -> None:
     prompt = str(event.get("prompt") or event.get("message") or "").strip()
     options = _build_enum_options(schema) if isinstance(schema, dict) else []
 
-    parts = ["⚙ input required"]
+    parts = ["input required"]
     if prompt:
         parts.append(prompt)
 
@@ -647,7 +648,7 @@ def handle_elicitation(event: dict[str, Any]) -> None:
                 parts.append(f"\nreply with: {desc}")
             break
 
-    write_to_pipe("\n".join(parts))
+    write_to_pipe("\n".join(parts), "Assistant/elicitation")
 
     reply_pipe = _make_reply_pipe()
     if reply_pipe is not None:
@@ -686,7 +687,7 @@ def handle_elicitation(event: dict[str, Any]) -> None:
     if status == "replaced":
         return
     if status != "ok":
-        write_to_pipe("⚙ input request ended")
+        write_to_pipe("input request ended", "System")
         return
 
     result: dict[str, Any] = {}
@@ -707,7 +708,7 @@ def handle_elicitation(event: dict[str, Any]) -> None:
         if props:
             result = {next(iter(props)): choice}
 
-    write_to_pipe(f"⚙ submitted: {choice or '(not submitted)'}")
+    write_to_pipe(f"submitted: {choice or '(not submitted)'}", "System")
     print(json.dumps({"result": result}))
 
 
@@ -718,7 +719,7 @@ def extract_elicitation_result_text(event: dict[str, Any]) -> str:
             rendered = json.dumps(result, ensure_ascii=False)
         except Exception:
             rendered = str(result)
-        return f"⚙ option result: {rendered}"
+        return f"option result: {rendered}"
     return ""
 
 
@@ -791,7 +792,7 @@ def load_transcript_delta(event: dict[str, Any], wait_for_update: bool = False) 
 
 def extract_stop_failure_text(event: dict[str, Any]) -> str:
     error = str(event.get("error") or event.get("message") or "unknown error").strip()
-    parts = ["⚙ Claude execution failed"]
+    parts = ["Claude execution failed"]
     if error:
         parts.append(error)
     return "\n".join(parts)
@@ -808,7 +809,7 @@ def extract_tool_failure_text(event: dict[str, Any]) -> str:
             hint = f"`{val[:100]}`"
             break
     subject = f"{tool_name} {hint}".strip()
-    parts = [f"⚙ tool failed: {subject}"]
+    parts = [f"tool failed: {subject}"]
     if error:
         parts.append(error[:300])
     return "\n".join(parts)
@@ -817,7 +818,7 @@ def extract_tool_failure_text(event: dict[str, Any]) -> str:
 def extract_pre_tool_text(event: dict[str, Any]) -> str:
     tool_name = str(event.get("tool_name") or "tool").strip()
     tool_input = event.get("tool_input") or {}
-    parts = [f"⚙ {tool_name}"]
+    parts = [f"{tool_name}"]
     if isinstance(tool_input, dict):
         for key in ("command", "path", "file_path", "url", "pattern", "query", "description"):
             val = tool_input.get(key)
@@ -832,21 +833,21 @@ def extract_session_event_text(event: dict[str, Any], mode: str) -> str:
         startup_type = str(event.get("startup_type") or event.get("type") or "startup").strip()
         labels = {"startup": "startup", "resume": "resume", "clear": "reset", "compact": "compaction restore"}
         label = labels.get(startup_type, startup_type)
-        return f"⚙ session {label}"
-    return "⚙ session ended"
+        return f"session {label}"
+    return "session ended"
 
 
 def extract_compact_text(event: dict[str, Any], mode: str) -> str:
     if mode == "pre":
-        return "⚙ compacting context..."
-    return "⚙ context compaction complete"
+        return "compacting context..."
+    return "context compaction complete"
 
 
 def extract_subagent_text(event: dict[str, Any], mode: str) -> str:
     agent_type = str(event.get("agent_type") or "subagent").strip()
     if mode == "start":
-        return f"⚙ subagent started: {agent_type}"
-    return f"⚙ subagent done: {agent_type}"
+        return f"subagent started: {agent_type}"
+    return f"subagent done: {agent_type}"
 
 
 def extract_user_prompt_text(event: dict[str, Any]) -> str:
@@ -863,7 +864,7 @@ def extract_user_prompt_text(event: dict[str, Any]) -> str:
             prompt = str(msg.get("content") or msg.get("text") or "").strip()
     if not prompt:
         return ""
-    return f"👤 {prompt}"
+    return prompt
 
 
 def main() -> None:
@@ -906,8 +907,10 @@ def main() -> None:
         return
     elif args.permission_denied:
         output = truncate(extract_permission_denied_text(event), MAX_LEN)
+        write_to_pipe(output, "Assistant/permission")
     elif args.notification:
         output = truncate(extract_notification_text(event), MAX_LEN)
+        write_to_pipe(output, "Assistant/notification")
     elif args.elicitation:
         handle_elicitation(event)
         return
@@ -915,52 +918,57 @@ def main() -> None:
         output = truncate(extract_elicitation_result_text(event), MAX_LEN)
         if not output:
             sys.exit(0)
+        write_to_pipe(output, "Assistant/elicitation")
     elif args.stop_failure:
         output = truncate(extract_stop_failure_text(event), MAX_LEN)
+        write_to_pipe(output, "System")
     elif args.post_tool_failure:
         output = truncate(extract_tool_failure_text(event), MAX_LEN)
+        write_to_pipe(output, "System")
     elif args.pre_tool_use:
         output = truncate(extract_pre_tool_text(event), MAX_LEN)
+        write_to_pipe(output, "Assistant/Tool")
     elif args.session_start:
         if not os.environ.get("CLAUDE_HOOK_PIPE"):
             _ambient_session_setup()
         output = truncate(extract_session_event_text(event, "start"), MAX_LEN)
+        write_to_pipe(output, "System")
     elif args.session_end:
         output = truncate(extract_session_event_text(event, "end"), MAX_LEN)
-        write_to_pipe(output)
+        write_to_pipe(output, "System")
         if not os.environ.get("CLAUDE_HOOK_PIPE"):
             _ambient_session_teardown()
-        return  # already wrote above
     elif args.pre_compact:
         output = truncate(extract_compact_text(event, "pre"), MAX_LEN)
+        write_to_pipe(output, "System")
     elif args.post_compact:
         output = truncate(extract_compact_text(event, "post"), MAX_LEN)
+        write_to_pipe(output, "System")
     elif args.subagent_start:
         output = truncate(extract_subagent_text(event, "start"), MAX_LEN)
+        write_to_pipe(output, "System")
     elif args.subagent_stop:
         output = truncate(extract_subagent_text(event, "stop"), MAX_LEN)
+        write_to_pipe(output, "System")
     elif args.user_prompt:
         output = truncate(extract_user_prompt_text(event), MAX_LEN)
         if not output:
             sys.exit(0)
+        write_to_pipe(output, "User")
     elif args.final:
         text = extract_final_text(event)
         if not text:
             sys.exit(0)
-        output = "🤖 " + truncate(text, MAX_LEN)
+        write_to_pipe(truncate(text, MAX_LEN), "Assistant")
     else:
         tool_summary = format_tool_output(event)
         transcript_delta = load_transcript_delta(event, wait_for_update=False)
-        pieces = []
-        if transcript_delta:
-            pieces.append("🤖 " + truncate(transcript_delta, MAX_LEN))
-        if tool_summary:
-            pieces.append("⚙ " + truncate(tool_summary, MAX_LEN))
-        if not pieces:
+        if not tool_summary and not transcript_delta:
             sys.exit(0)
-        output = "\n\n".join(pieces)
-
-    write_to_pipe(output)
+        if transcript_delta:
+            write_to_pipe(truncate(transcript_delta, MAX_LEN), "Assistant")
+        if tool_summary:
+            write_to_pipe(truncate(tool_summary, MAX_LEN), "Assistant/Tool")
 
 
 if __name__ == "__main__":

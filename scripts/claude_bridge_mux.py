@@ -25,6 +25,14 @@ def set_winsize(fd: int, winsize: bytes) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
 
 
+def write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    offset = 0
+    while offset < len(view):
+        n = os.write(fd, view[offset:])
+        offset += n
+
+
 def main() -> int:
     if len(sys.argv) < 4 or "--" not in sys.argv[1:]:
         print("usage: claude_bridge_mux.py <input-pipe> -- <command> [args...]", file=sys.stderr)
@@ -102,7 +110,7 @@ def main() -> int:
                         continue
 
                 if source == "pty":
-                    os.write(stdout_fd, data)
+                    write_all(stdout_fd, data)
                 else:
                     if source == "pipe":
                         # Go's Fprintln appends one "\n" per message.  Strip
@@ -112,8 +120,14 @@ def main() -> int:
                         # from a multi-line WeChat message; Claude Code
                         # renders it as a visual newline in the input buffer
                         # without triggering a premature submission.
-                        data = data.rstrip(b"\n") + b"\r"
-                    os.write(master_fd, data)
+                        #
+                        # Write body and Enter separately so that a partial
+                        # write of the body never swallows the \r.
+                        body = data.rstrip(b"\n")
+                        write_all(master_fd, body)
+                        write_all(master_fd, b"\r")
+                    else:
+                        write_all(master_fd, data)
     finally:
         if old_attrs is not None:
             termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_attrs)
