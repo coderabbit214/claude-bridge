@@ -36,6 +36,7 @@ PERM_DIR   = Path("/tmp/claude-bridge-perm")
 INTERACT_DIR = Path("/tmp/claude-bridge-interact")
 CONTROL_PIPE = Path("/tmp/claude-bridge-control.pipe")
 REPLACED_INTERACTION_TOKEN = "__claude_bridge_replaced__"
+INPUT_DAEMON_VERSION = 2
 
 # When not launched by the bridge, derive PIPE/SID from the parent PID.
 # Pipes, manifest, and the input daemon are created in the SessionStart hook
@@ -119,10 +120,28 @@ def _ambient_session_setup() -> None:
     need_daemon = True
     if os.path.exists(daemon_pid_file):
         try:
-            dpid = int(Path(daemon_pid_file).read_text().strip())
+            meta = json.loads(Path(daemon_pid_file).read_text())
+            dpid = int(meta.get("pid"))
+            version = int(meta.get("version", 0))
             os.kill(dpid, 0)
-            need_daemon = False
-        except (OSError, ValueError, FileNotFoundError):
+            if version == INPUT_DAEMON_VERSION:
+                need_daemon = False
+            else:
+                try:
+                    os.kill(dpid, 15)
+                except OSError:
+                    pass
+        except (OSError, ValueError, FileNotFoundError, json.JSONDecodeError, TypeError):
+            try:
+                dpid = int(Path(daemon_pid_file).read_text().strip())
+                os.kill(dpid, 0)
+                try:
+                    os.kill(dpid, 15)
+                except OSError:
+                    pass
+            except (OSError, ValueError, FileNotFoundError):
+                pass
+        if need_daemon:
             pass
     if need_daemon:
         d = _sp.Popen(
@@ -131,7 +150,10 @@ def _ambient_session_setup() -> None:
             stdin=_sp.DEVNULL, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
         )
         try:
-            Path(daemon_pid_file).write_text(str(d.pid))
+            Path(daemon_pid_file).write_text(_json.dumps({
+                "pid": d.pid,
+                "version": INPUT_DAEMON_VERSION,
+            }))
         except Exception:
             pass
 
@@ -185,11 +207,24 @@ def run_input_daemon(input_pipe: str, manifest_path: str, output_pipe: str) -> N
     import select as _sel
     import termios
 
+    def inject_line(tty_fd: int, line: bytes) -> None:
+        chunk_size = 96
+        for start in range(0, len(line), chunk_size):
+            chunk = line[start:start + chunk_size]
+            for byte in chunk:
+                fcntl.ioctl(tty_fd, termios.TIOCSTI, bytes([byte]))
+            if start + chunk_size < len(line):
+                time.sleep(0.01)
+        time.sleep(0.03)
+        fcntl.ioctl(tty_fd, termios.TIOCSTI, b"\r")
+
     tty_fd: int | None = None
     try:
         tty_fd = os.open("/dev/tty", os.O_RDWR)
     except OSError:
         pass  # No controlling terminal — input injection unavailable; output still works.
+
+    pipe_buf = b""
 
     try:
         while os.path.exists(input_pipe) and os.path.exists(manifest_path):
@@ -211,17 +246,21 @@ def run_input_daemon(input_pipe: str, manifest_path: str, output_pipe: str) -> N
                     except OSError:
                         data = b""
                     if not data:
+                        if tty_fd is not None and pipe_buf:
+                            try:
+                                inject_line(tty_fd, pipe_buf)
+                            except OSError:
+                                pass
+                            pipe_buf = b""
                         # EOF: the bridge closed its write end (stopped/restarted).
                         # Break to reopen the pipe and wait for reconnection.
                         break
-                    # Replace \n with \r: terminals in raw mode use CR (not LF) as
-                    # the Enter signal.  Without this, text appears in the input box
-                    # but is never submitted — same substitution the mux script does.
-                    data = data.replace(b"\n", b"\r")
+                    pipe_buf += data
                     if tty_fd is not None:
                         try:
-                            for byte in data:
-                                fcntl.ioctl(tty_fd, termios.TIOCSTI, bytes([byte]))
+                            while b"\n" in pipe_buf:
+                                line, pipe_buf = pipe_buf.split(b"\n", 1)
+                                inject_line(tty_fd, line)
                         except OSError:
                             pass  # TIOCSTI restricted on this macOS version — skip silently
             finally:
@@ -902,6 +941,9 @@ def main() -> None:
     except Exception:
         sys.exit(0)
 
+    if not os.environ.get("CLAUDE_HOOK_PIPE"):
+        _ambient_session_setup()
+
     if args.permission_request:
         handle_permission_request(event)
         return
@@ -929,8 +971,6 @@ def main() -> None:
         output = truncate(extract_pre_tool_text(event), MAX_LEN)
         write_to_pipe(output, "Assistant/Tool")
     elif args.session_start:
-        if not os.environ.get("CLAUDE_HOOK_PIPE"):
-            _ambient_session_setup()
         output = truncate(extract_session_event_text(event, "start"), MAX_LEN)
         write_to_pipe(output, "System")
     elif args.session_end:

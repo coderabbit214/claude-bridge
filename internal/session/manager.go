@@ -37,6 +37,19 @@ type Session struct {
 	alive   bool // true while the session goroutine is running
 }
 
+func normalizeSessionInput(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+
+	parts := strings.FieldsFunc(text, func(r rune) bool {
+		return r == '\n'
+	})
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " ")
+}
+
 // Write sends a line of text to Claude Code's stdin.
 func (s *Session) Write(text string) error {
 	if s.writer == nil && s.InPipe == "" {
@@ -49,6 +62,7 @@ func (s *Session) Write(text string) error {
 		}
 		s.writer = writer
 	}
+	text = normalizeSessionInput(text)
 	slog.Info("session input", "id", s.ID, "chars", len([]rune(text)))
 	_, err := fmt.Fprintln(s.writer, text)
 	return err

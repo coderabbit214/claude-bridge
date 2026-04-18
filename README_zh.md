@@ -28,9 +28,10 @@ brew services start claude-bridge
 ## 更新
 
 ```bash
+claude-bridge stop
 brew update
 brew upgrade claude-bridge
-brew services restart claude-bridge
+claude-bridge start
 ```
 
 ## 本地命令

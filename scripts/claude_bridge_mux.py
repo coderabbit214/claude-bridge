@@ -7,6 +7,7 @@ import selectors
 import signal
 import sys
 import termios
+import time
 import tty
 
 
@@ -29,8 +30,18 @@ def write_all(fd: int, data: bytes) -> None:
     view = memoryview(data)
     offset = 0
     while offset < len(view):
-        n = os.write(fd, view[offset:])
-        offset += n
+        offset += os.write(fd, view[offset:])
+
+
+def submit_line(master_fd: int, line: bytes) -> None:
+    chunk_size = 96
+    for start in range(0, len(line), chunk_size):
+        chunk = line[start:start + chunk_size]
+        write_all(master_fd, chunk)
+        if start + chunk_size < len(line):
+            time.sleep(0.01)
+    time.sleep(0.03)
+    write_all(master_fd, b"\r")
 
 
 def main() -> int:
@@ -61,6 +72,7 @@ def main() -> int:
         stdin_registered = False
 
     pipe_fd = None
+    pipe_buf = b""
     stdin_tty = os.isatty(stdin_fd)
     old_attrs = None
     if stdin_tty and stdin_registered:
@@ -104,6 +116,9 @@ def main() -> int:
 
                 if not data:
                     if source == "pipe" and pipe_fd is not None:
+                        if pipe_buf:
+                            submit_line(master_fd, pipe_buf)
+                            pipe_buf = b""
                         selector.unregister(pipe_fd)
                         os.close(pipe_fd)
                         pipe_fd = None
@@ -113,19 +128,10 @@ def main() -> int:
                     write_all(stdout_fd, data)
                 else:
                     if source == "pipe":
-                        # Go's Fprintln appends one "\n" per message.  Strip
-                        # it and terminate with "\r" (Enter) instead so the
-                        # message is submitted exactly once.  Any "\n" that
-                        # remains after stripping is an in-message newline
-                        # from a multi-line WeChat message; Claude Code
-                        # renders it as a visual newline in the input buffer
-                        # without triggering a premature submission.
-                        #
-                        # Write body and Enter separately so that a partial
-                        # write of the body never swallows the \r.
-                        body = data.rstrip(b"\n")
-                        write_all(master_fd, body)
-                        write_all(master_fd, b"\r")
+                        pipe_buf += data
+                        while b"\n" in pipe_buf:
+                            line, pipe_buf = pipe_buf.split(b"\n", 1)
+                            submit_line(master_fd, line)
                     else:
                         write_all(master_fd, data)
     finally:
