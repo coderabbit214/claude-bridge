@@ -381,6 +381,26 @@ func (m *Manager) getOrCreate(sid, workDir string) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s, ok := m.sessions[sid]; ok && s.IsAlive() {
+		if s.InPipe != "" {
+			if _, err := os.Stat(s.InPipe); os.IsNotExist(err) {
+				// Pipe file gone — session ended without sending the hook message.
+				if s.cancel != nil {
+					s.cancel()
+				}
+				if s.writer != nil {
+					_ = s.writer.Close()
+				}
+				delete(m.sessions, sid)
+				delete(m.pending, sid)
+				if m.defaultSession == sid {
+					m.defaultSession = ""
+				}
+				if workDir == "." {
+					return nil, fmt.Errorf("session #%s does not exist; create one with #n <dir>", sid)
+				}
+				return m.start(sid, workDir)
+			}
+		}
 		return s, nil
 	}
 	if workDir == "." {
@@ -458,20 +478,7 @@ func (m *Manager) start(sid, workDir string) (*Session, error) {
 
 	go func() {
 		m.readPipe(ctx, pipePath, sid)
-		// readPipe returned → output pipe was removed (Claude exited).
-		m.mu.Lock()
-		if s, ok := m.sessions[sid]; ok {
-			if s.cancel != nil {
-				s.cancel()
-			}
-			if s.writer != nil {
-				_ = s.writer.Close()
-			}
-		}
-		delete(m.sessions, sid)
-		delete(m.pending, sid)
-		m.mu.Unlock()
-		slog.Info("session cleaned up", "id", sid)
+		m.cleanupSession(sid)
 	}()
 
 	slog.Info("session started", "id", sid, "cwd", workDir)
@@ -551,9 +558,35 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
+func (m *Manager) cleanupSession(sid string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[sid]
+	if !ok {
+		return
+	}
+	if s.cancel != nil {
+		s.cancel()
+	}
+	if s.writer != nil {
+		_ = s.writer.Close()
+		s.writer = nil
+	}
+	delete(m.sessions, sid)
+	delete(m.pending, sid)
+	if m.defaultSession == sid {
+		m.defaultSession = ""
+	}
+	slog.Info("session cleaned up", "id", sid)
+}
+
 // readPipe reads output blocks from the hook script via a named pipe.
 // The hook writes lines and terminates each block with "---END---\n".
 func (m *Manager) readPipe(ctx context.Context, pipePath, sid string) {
+	type openResult struct {
+		f   *os.File
+		err error
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -561,10 +594,28 @@ func (m *Manager) readPipe(ctx context.Context, pipePath, sid string) {
 		default:
 		}
 
-		f, err := os.Open(pipePath) // blocks until hook opens write end
-		if err != nil {
-			if os.IsNotExist(err) {
-				// Pipe file was removed — the session has ended; stop looping.
+		// Open in a goroutine so ctx cancellation can interrupt the blocking call.
+		ch := make(chan openResult, 1)
+		go func() {
+			f, err := os.Open(pipePath)
+			ch <- openResult{f, err}
+		}()
+
+		var res openResult
+		select {
+		case <-ctx.Done():
+			// Drain ch in background; the open goroutine may still be blocking.
+			go func() {
+				if r := <-ch; r.f != nil {
+					r.f.Close()
+				}
+			}()
+			return
+		case res = <-ch:
+		}
+
+		if res.err != nil {
+			if os.IsNotExist(res.err) {
 				return
 			}
 			select {
@@ -575,14 +626,18 @@ func (m *Manager) readPipe(ctx context.Context, pipePath, sid string) {
 			}
 		}
 
+		sessionEnded := false
 		var buf strings.Builder
-		scanner := bufio.NewScanner(f)
+		scanner := bufio.NewScanner(res.f)
 		scanner.Buffer(make([]byte, 128*1024), 128*1024)
 		for scanner.Scan() {
 			line := scanner.Text()
 			if line == "---END---" {
 				if text := strings.TrimSpace(buf.String()); text != "" {
 					m.onOutput(sid, text)
+					if isSessionEndMessage(text) {
+						sessionEnded = true
+					}
 				}
 				buf.Reset()
 			} else {
@@ -593,6 +648,19 @@ func (m *Manager) readPipe(ctx context.Context, pipePath, sid string) {
 		if text := strings.TrimSpace(buf.String()); text != "" {
 			m.onOutput(sid, text)
 		}
-		f.Close()
+		res.f.Close()
+		if sessionEnded {
+			return
+		}
 	}
+}
+
+// isSessionEndMessage reports whether a pipe block is the session-end sentinel
+// written by the --session-end hook ("SENDER:System\nsession ended").
+func isSessionEndMessage(text string) bool {
+	after, ok := strings.CutPrefix(text, "SENDER:System")
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(after) == "session ended"
 }

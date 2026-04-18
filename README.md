@@ -31,6 +31,8 @@ brew services start claude-bridge
 claude-bridge stop
 brew update
 brew upgrade claude-bridge
+claude-bridge install-hooks
+claude-bridge clear # Optional: clear existing sessions and logs
 claude-bridge start
 ```
 
@@ -46,6 +48,7 @@ claude-bridge logs        # View logs
 claude-bridge logs -f     # Follow logs
 claude-bridge login       # Scan QR to log in
 claude-bridge install-hooks  # Install Claude hooks
+claude-bridge clear       # Clear sessions and logs
 ```
 
 ## WeChat Commands

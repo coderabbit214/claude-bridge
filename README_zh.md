@@ -31,6 +31,8 @@ brew services start claude-bridge
 claude-bridge stop
 brew update
 brew upgrade claude-bridge
+claude-bridge install-hooks
+claude-bridge clear # 可选：清除现有会话和日志
 claude-bridge start
 ```
 
@@ -46,6 +48,7 @@ claude-bridge logs        # 查看日志
 claude-bridge logs -f     # 持续跟随日志
 claude-bridge login       # 扫码登录
 claude-bridge install-hooks  # 安装 Claude hooks
+claude-bridge clear # 清除现有会话和日志
 ```
 
 ## 微信命令
